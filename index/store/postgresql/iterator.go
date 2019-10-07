@@ -17,220 +17,45 @@ package postgresql
 import (
 	"bytes"
 	"database/sql"
-	"fmt"
-	"log"
 )
 
 // Iterator is an abstraction around key iteration
 type Iterator struct {
-	tx *sql.Tx
-
-	table  string
-	keyCol string
-	valCol string
-
-	prefix []byte
-	start  []byte
-	end    []byte
+	rows *sql.Rows
 
 	key []byte
 	val []byte
 
-	err error
-}
+	prefix []byte
 
-func (i *Iterator) seekQueryRow(key []byte) *sql.Row {
-	if i.prefix != nil && i.end != nil {
-		query := fmt.Sprintf(
-			"SELECT %s, %s FROM %s WHERE %s >= $1 AND %s LIKE $2 AND %s < $3 ORDER BY %s LIMIT 1;",
-			i.keyCol,
-			i.valCol,
-			i.table,
-			i.keyCol,
-			i.keyCol,
-			i.keyCol,
-			i.keyCol,
-		)
-
-		stmt, err := i.tx.Prepare(query)
-		if err != nil {
-			log.Printf("could not prepare statement for seek: %v", err)
-			return nil
-		}
-
-		prefix := i.prefix
-		prefix = append(prefix, '%')
-
-		return stmt.QueryRow(key, prefix, i.end)
-	}
-
-	if i.prefix != nil {
-		query := fmt.Sprintf(
-			"SELECT %s, %s FROM %s WHERE %s >= $1 AND %s LIKE $2 ORDER BY %s LIMIT 1;",
-			i.keyCol,
-			i.valCol,
-			i.table,
-			i.keyCol,
-			i.keyCol,
-			i.keyCol,
-		)
-
-		stmt, err := i.tx.Prepare(query)
-		if err != nil {
-			log.Printf("could not prepare statement for seek: %v", err)
-			return nil
-		}
-
-		prefix := i.prefix
-		prefix = append(prefix, '%')
-
-		return stmt.QueryRow(key, prefix)
-	}
-
-	if i.end != nil {
-		query := fmt.Sprintf(
-			"SELECT %s, %s FROM %s WHERE %s >= $1 AND %s < $2 ORDER BY %s LIMIT 1;",
-			i.keyCol,
-			i.valCol,
-			i.table,
-			i.keyCol,
-			i.keyCol,
-			i.keyCol,
-		)
-
-		stmt, err := i.tx.Prepare(query)
-		if err != nil {
-			log.Printf("could not prepare statement for seek: %v", err)
-			return nil
-		}
-
-		return stmt.QueryRow(key, i.end)
-	}
-
-	query := fmt.Sprintf(
-		"SELECT %s, %s FROM %s WHERE %s >= $1 ORDER BY %s LIMIT 1;",
-		i.keyCol,
-		i.valCol,
-		i.table,
-		i.keyCol,
-		i.keyCol,
-	)
-
-	stmt, err := i.tx.Prepare(query)
-	if err != nil {
-		log.Printf("could not prepare statement for seek: %v", err)
-		return nil
-	}
-
-	return stmt.QueryRow(key)
+	valid bool
 }
 
 // Seek will advance the iterator to the specified key
 func (i *Iterator) Seek(key []byte) {
-	if key == nil {
-		key = []byte{0}
-	}
-	if i.start != nil && bytes.Compare(key, i.start) < 0 {
-		key = i.start
+	if i.key != nil && bytes.Compare(key, i.key) <= 0 || i.prefix != nil && bytes.Compare(key, i.prefix) < 0 {
+		return
 	}
 
-	i.err = i.seekQueryRow(key).Scan(&i.key, &i.val)
-	if i.err != nil && i.err != sql.ErrNoRows {
-		log.Printf("could not query row for Seek: %v", i.err)
-	}
-}
+	i.Next()
 
-func (i *Iterator) nextQueryRow() *sql.Row {
-	if i.prefix != nil && i.end != nil {
-		query := fmt.Sprintf(
-			"SELECT %s, %s FROM %s WHERE %s > $1 AND %s LIKE $2 AND %s < $3 ORDER BY %s LIMIT 1;",
-			i.keyCol,
-			i.valCol,
-			i.table,
-			i.keyCol,
-			i.keyCol,
-			i.keyCol,
-			i.keyCol,
-		)
-
-		prefix := i.prefix
-		prefix = append(prefix, '%')
-
-		stmt, err := i.tx.Prepare(query)
-		if err != nil {
-			log.Printf("could not prepare statement for seek: %v", err)
-			return nil
-		}
-
-		return stmt.QueryRow(i.key, prefix, i.end)
+	if !i.valid || bytes.Compare(i.key, key) >= 0 {
+		return
 	}
 
-	if i.prefix != nil {
-		query := fmt.Sprintf(
-			"SELECT %s, %s FROM %s WHERE %s > $1 AND %s LIKE $2 ORDER BY %s LIMIT 1;",
-			i.keyCol,
-			i.valCol,
-			i.table,
-			i.keyCol,
-			i.keyCol,
-			i.keyCol,
-		)
-
-		prefix := i.prefix
-		prefix = append(prefix, '%')
-
-		stmt, err := i.tx.Prepare(query)
-		if err != nil {
-			log.Printf("could not prepare statement for seek: %v", err)
-			return nil
-		}
-
-		return stmt.QueryRow(i.key, prefix)
-	}
-
-	if i.end != nil {
-		query := fmt.Sprintf(
-			"SELECT %s, %s FROM %s WHERE %s > $1 AND %s < $2 ORDER BY %s LIMIT 1;",
-			i.keyCol,
-			i.valCol,
-			i.table,
-			i.keyCol,
-			i.keyCol,
-			i.keyCol,
-		)
-
-		stmt, err := i.tx.Prepare(query)
-		if err != nil {
-			log.Printf("could not prepare statement for seek: %v", err)
-			return nil
-		}
-
-		return stmt.QueryRow(i.key, i.end)
-	}
-
-	query := fmt.Sprintf(
-		"SELECT %s, %s FROM %s WHERE %s > $1 ORDER BY %s LIMIT 1;",
-		i.keyCol,
-		i.valCol,
-		i.table,
-		i.keyCol,
-		i.keyCol,
-	)
-
-	stmt, err := i.tx.Prepare(query)
-	if err != nil {
-		log.Printf("could not prepare statement for seek: %v", err)
-		return nil
-	}
-
-	return stmt.QueryRow(i.key)
+	i.Seek(key)
 }
 
 // Next will advance the iterator to the next key
 func (i *Iterator) Next() {
-	i.err = i.nextQueryRow().Scan(&i.key, &i.val)
-	if i.err != nil && i.err != sql.ErrNoRows {
-		log.Printf("could not query row for Next: %v", i.err)
+	if !i.rows.Next() {
+		i.valid = false
+		return
+	}
+
+	err := i.rows.Scan(&i.key, &i.val)
+	if err != nil {
+		i.valid = false
 	}
 }
 
@@ -238,9 +63,6 @@ func (i *Iterator) Next() {
 // The bytes returned are **ONLY** valid until the next call to Seek/Next/Close
 // Continued use after that requires that they be copied.
 func (i *Iterator) Key() []byte {
-	if i.err != nil {
-		return nil
-	}
 	return i.key
 }
 
@@ -248,15 +70,12 @@ func (i *Iterator) Key() []byte {
 // The bytes returned are **ONLY** valid until the next call to Seek/Next/Close
 // Continued use after that requires that they be copied.
 func (i *Iterator) Value() []byte {
-	if i.err != nil {
-		return nil
-	}
 	return i.val
 }
 
 // Valid returns whether or not the iterator is in a valid state
 func (i *Iterator) Valid() bool {
-	return i.err == nil
+	return i.valid
 }
 
 // Current returns Key(),Value(),Valid() in a single operation
@@ -266,5 +85,5 @@ func (i *Iterator) Current() ([]byte, []byte, bool) {
 
 // Close closes the iterator
 func (i *Iterator) Close() error {
-	return nil
+	return i.rows.Close()
 }

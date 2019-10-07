@@ -116,37 +116,195 @@ func (r *Reader) MultiGet(keys [][]byte) ([][]byte, error) {
 	return vals, nil
 }
 
+func (r *Reader) prefixRows(prefix []byte) (*sql.Rows, error) {
+	if prefix != nil {
+		query := fmt.Sprintf(
+			"SELECT %s, %s FROM %s WHERE %s LIKE $1 ORDER BY %s;",
+			r.keyCol,
+			r.valCol,
+			r.table,
+			r.keyCol,
+			r.keyCol,
+		)
+
+		fmt.Printf("[DEBUG] - PrefixIterator: query: %s\n", query)
+		fmt.Printf("[DEBUG] - RangeIterator: prefix %q\n", append(prefix, '%'))
+
+		stmt, err := r.tx.Prepare(query)
+		if err != nil {
+			log.Printf("could not prepare statement for PrefixIterator: %v", err)
+			return nil, err
+		}
+
+		rows, err := stmt.Query(append(prefix, '%'))
+		if err != nil {
+			log.Printf("could not execute statement for PrefixIterator: %v", err)
+			return nil, err
+		}
+
+		return rows, nil
+	}
+
+	query := fmt.Sprintf(
+		"SELECT %s, %s FROM %s ORDER BY %s;",
+		r.keyCol,
+		r.valCol,
+		r.table,
+		r.keyCol,
+	)
+
+	fmt.Printf("[DEBUG] - PrefixIterator: query: %s\n", query)
+
+	stmt, err := r.tx.Prepare(query)
+	if err != nil {
+		log.Printf("could not prepare statement for PrefixIterator: %v", err)
+		return nil, err
+	}
+
+	rows, err := stmt.Query()
+	if err != nil {
+		log.Printf("could not execute statement for PrefixIterator: %v", err)
+		return nil, err
+	}
+
+	return rows, nil
+}
+
 // PrefixIterator returns a KVIterator that will
 // visit all K/V pairs with the provided prefix
 func (r *Reader) PrefixIterator(prefix []byte) store.KVIterator {
-	rv := &Iterator{
-		tx:     r.tx,
-		table:  r.table,
-		keyCol: r.keyCol,
-		valCol: r.valCol,
-		prefix: prefix,
+	rows, err := r.prefixRows(prefix)
+	if err != nil {
+		return nil
 	}
 
-	rv.Seek(prefix)
+	it := &Iterator{
+		rows:   rows,
+		prefix: prefix,
+		valid:  true,
+	}
 
-	return rv
+	it.Next()
+
+	return it
+}
+
+func (r *Reader) rangeRows(start, end []byte) (*sql.Rows, error) {
+	if start != nil && end != nil {
+		query := fmt.Sprintf(
+			"SELECT %s, %s FROM %s WHERE %s >= $1 AND %s < $2 ORDER BY %s;",
+			r.keyCol,
+			r.valCol,
+			r.table,
+			r.keyCol,
+			r.keyCol,
+			r.keyCol,
+		)
+
+		stmt, err := r.tx.Prepare(query)
+		if err != nil {
+			log.Printf("could not prepare statement for RangeIterator: %v", err)
+			return nil, err
+		}
+
+		rows, err := stmt.Query(start, end)
+		if err != nil {
+			log.Printf("could not execute statement for RangeIterator: %v", err)
+			return nil, err
+		}
+
+		return rows, nil
+	}
+
+	if start != nil {
+		query := fmt.Sprintf(
+			"SELECT %s, %s FROM %s WHERE %s >= $1 ORDER BY %s;",
+			r.keyCol,
+			r.valCol,
+			r.table,
+			r.keyCol,
+			r.keyCol,
+		)
+
+		stmt, err := r.tx.Prepare(query)
+		if err != nil {
+			log.Printf("could not prepare statement for RangeIterator: %v", err)
+			return nil, err
+		}
+
+		rows, err := stmt.Query(start)
+		if err != nil {
+			log.Printf("could not execute statement for RangeIterator: %v", err)
+			return nil, err
+		}
+
+		return rows, nil
+	}
+
+	if end != nil {
+		query := fmt.Sprintf(
+			"SELECT %s, %s FROM %s WHERE %s < $1 ORDER BY %s;",
+			r.keyCol,
+			r.valCol,
+			r.table,
+			r.keyCol,
+			r.keyCol,
+		)
+
+		stmt, err := r.tx.Prepare(query)
+		if err != nil {
+			log.Printf("could not prepare statement for RangeIterator: %v", err)
+			return nil, err
+		}
+
+		rows, err := stmt.Query(end)
+		if err != nil {
+			log.Printf("could not execute statement for RangeIterator: %v", err)
+			return nil, err
+		}
+
+		return rows, nil
+	}
+
+	query := fmt.Sprintf(
+		"SELECT %s, %s FROM %s ORDER BY %s;",
+		r.keyCol,
+		r.valCol,
+		r.table,
+		r.keyCol,
+	)
+
+	stmt, err := r.tx.Prepare(query)
+	if err != nil {
+		log.Printf("could not prepare statement for RangeIterator: %v", err)
+		return nil, err
+	}
+
+	rows, err := stmt.Query()
+	if err != nil {
+		log.Printf("could not execute statement for RangeIterator: %v", err)
+		return nil, err
+	}
+
+	return rows, nil
 }
 
 // RangeIterator returns a KVIterator that will
 // visit all K/V pairs >= start AND < end
 func (r *Reader) RangeIterator(start, end []byte) store.KVIterator {
-	rv := &Iterator{
-		tx:     r.tx,
-		table:  r.table,
-		keyCol: r.keyCol,
-		valCol: r.valCol,
-		start:  start,
-		end:    end,
+	rows, err := r.rangeRows(start, end)
+	if err != nil {
+		return nil
 	}
 
-	rv.Seek(start)
+	it := &Iterator{
+		rows:  rows,
+		valid: true,
+	}
 
-	return rv
+	it.Next()
+
+	return it
 }
 
 // Close closes the reader
