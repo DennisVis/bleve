@@ -127,9 +127,6 @@ func (r *Reader) prefixRows(prefix []byte) (*sql.Rows, error) {
 			r.keyCol,
 		)
 
-		fmt.Printf("[DEBUG] - PrefixIterator: query: %s\n", query)
-		fmt.Printf("[DEBUG] - RangeIterator: prefix %q\n", append(prefix, '%'))
-
 		stmt, err := r.tx.Prepare(query)
 		if err != nil {
 			log.Printf("could not prepare statement for PrefixIterator: %v", err)
@@ -152,8 +149,6 @@ func (r *Reader) prefixRows(prefix []byte) (*sql.Rows, error) {
 		r.table,
 		r.keyCol,
 	)
-
-	fmt.Printf("[DEBUG] - PrefixIterator: query: %s\n", query)
 
 	stmt, err := r.tx.Prepare(query)
 	if err != nil {
