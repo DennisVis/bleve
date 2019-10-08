@@ -17,45 +17,71 @@ package postgresql
 import (
 	"bytes"
 	"database/sql"
+	"log"
 )
 
 // Iterator is an abstraction around key iteration
 type Iterator struct {
+	stmt *sql.Stmt
+	args []interface{}
+
 	rows *sql.Rows
 
 	key []byte
 	val []byte
 
-	prefix []byte
+	err error
+}
 
-	valid bool
+func NewIterator(stmt *sql.Stmt, args ...interface{}) (*Iterator, error) {
+	rows, err := stmt.Query(args...)
+	if err != nil {
+		log.Printf("could not execute statement in NewIterator: %v", err)
+		return nil, err
+	}
+
+	it := &Iterator{
+		stmt: stmt,
+		args: args,
+		rows: rows,
+	}
+
+	it.Next()
+
+	return it, nil
 }
 
 // Seek will advance the iterator to the specified key
 func (i *Iterator) Seek(key []byte) {
-	if i.key != nil && bytes.Compare(key, i.key) <= 0 || i.prefix != nil && bytes.Compare(key, i.prefix) < 0 {
+	if i.key != nil && bytes.Compare(key, i.key) <= 0 {
 		return
 	}
 
-	i.Next()
+	i.Close()
 
-	if !i.valid || bytes.Compare(i.key, key) >= 0 {
+	i.rows, i.err = i.stmt.Query(i.args...)
+	if i.err != nil {
+		log.Printf("could not execute statement in Seek: %err", i.err)
 		return
 	}
 
-	i.Seek(key)
+	for ; i.Valid(); i.Next() {
+		if bytes.Compare(i.key, key) >= 0 {
+			break
+		}
+	}
 }
 
 // Next will advance the iterator to the next key
 func (i *Iterator) Next() {
 	if !i.rows.Next() {
-		i.valid = false
+		i.err = sql.ErrNoRows
 		return
 	}
 
-	err := i.rows.Scan(&i.key, &i.val)
-	if err != nil {
-		i.valid = false
+	i.err = i.rows.Scan(&i.key, &i.val)
+	if i.err != nil {
+		log.Printf("could not scan row as key/val in Next: %err", i.err)
 	}
 }
 
@@ -63,19 +89,25 @@ func (i *Iterator) Next() {
 // The bytes returned are **ONLY** valid until the next call to Seek/Next/Close
 // Continued use after that requires that they be copied.
 func (i *Iterator) Key() []byte {
-	return i.key
+	if i.Valid() {
+		return i.key
+	}
+	return nil
 }
 
 // Value returns the value pointed to by the iterator
 // The bytes returned are **ONLY** valid until the next call to Seek/Next/Close
 // Continued use after that requires that they be copied.
 func (i *Iterator) Value() []byte {
-	return i.val
+	if i.Valid() {
+		return i.val
+	}
+	return nil
 }
 
 // Valid returns whether or not the iterator is in a valid state
 func (i *Iterator) Valid() bool {
-	return i.valid
+	return i.err == nil
 }
 
 // Current returns Key(),Value(),Valid() in a single operation
@@ -85,5 +117,8 @@ func (i *Iterator) Current() ([]byte, []byte, bool) {
 
 // Close closes the iterator
 func (i *Iterator) Close() error {
-	return i.rows.Close()
+	if i.rows != nil {
+		return i.rows.Close()
+	}
+	return nil
 }

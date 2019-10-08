@@ -116,7 +116,7 @@ func (r *Reader) MultiGet(keys [][]byte) ([][]byte, error) {
 	return vals, nil
 }
 
-func (r *Reader) prefixRows(prefix []byte) (*sql.Rows, error) {
+func (r *Reader) createPrefixStmt(prefix []byte) (*sql.Stmt, []interface{}, error) {
 	if prefix != nil {
 		query := fmt.Sprintf(
 			"SELECT %s, %s FROM %s WHERE %s LIKE $1 ORDER BY %s;",
@@ -130,16 +130,10 @@ func (r *Reader) prefixRows(prefix []byte) (*sql.Rows, error) {
 		stmt, err := r.tx.Prepare(query)
 		if err != nil {
 			log.Printf("could not prepare statement for PrefixIterator: %v", err)
-			return nil, err
+			return nil, nil, err
 		}
 
-		rows, err := stmt.Query(append(prefix, '%'))
-		if err != nil {
-			log.Printf("could not execute statement for PrefixIterator: %v", err)
-			return nil, err
-		}
-
-		return rows, nil
+		return stmt, []interface{}{append(prefix, '%')}, nil
 	}
 
 	query := fmt.Sprintf(
@@ -153,38 +147,30 @@ func (r *Reader) prefixRows(prefix []byte) (*sql.Rows, error) {
 	stmt, err := r.tx.Prepare(query)
 	if err != nil {
 		log.Printf("could not prepare statement for PrefixIterator: %v", err)
-		return nil, err
+		return nil, nil, err
 	}
 
-	rows, err := stmt.Query()
-	if err != nil {
-		log.Printf("could not execute statement for PrefixIterator: %v", err)
-		return nil, err
-	}
-
-	return rows, nil
+	return stmt, []interface{}{}, nil
 }
 
 // PrefixIterator returns a KVIterator that will
 // visit all K/V pairs with the provided prefix
 func (r *Reader) PrefixIterator(prefix []byte) store.KVIterator {
-	rows, err := r.prefixRows(prefix)
+	stmt, args, err := r.createPrefixStmt(prefix)
 	if err != nil {
 		return nil
 	}
 
-	it := &Iterator{
-		rows:   rows,
-		prefix: prefix,
-		valid:  true,
+	it, err := NewIterator(stmt, args...)
+	if err != nil {
+		log.Printf("could not create iterator in PrefixIterator: %v", err)
+		return nil
 	}
-
-	it.Next()
 
 	return it
 }
 
-func (r *Reader) rangeRows(start, end []byte) (*sql.Rows, error) {
+func (r *Reader) createRangeStmt(start, end []byte) (*sql.Stmt, []interface{}, error) {
 	if start != nil && end != nil {
 		query := fmt.Sprintf(
 			"SELECT %s, %s FROM %s WHERE %s >= $1 AND %s < $2 ORDER BY %s;",
@@ -199,16 +185,10 @@ func (r *Reader) rangeRows(start, end []byte) (*sql.Rows, error) {
 		stmt, err := r.tx.Prepare(query)
 		if err != nil {
 			log.Printf("could not prepare statement for RangeIterator: %v", err)
-			return nil, err
+			return nil, nil, err
 		}
 
-		rows, err := stmt.Query(start, end)
-		if err != nil {
-			log.Printf("could not execute statement for RangeIterator: %v", err)
-			return nil, err
-		}
-
-		return rows, nil
+		return stmt, []interface{}{start, end}, nil
 	}
 
 	if start != nil {
@@ -224,16 +204,10 @@ func (r *Reader) rangeRows(start, end []byte) (*sql.Rows, error) {
 		stmt, err := r.tx.Prepare(query)
 		if err != nil {
 			log.Printf("could not prepare statement for RangeIterator: %v", err)
-			return nil, err
+			return nil, nil, err
 		}
 
-		rows, err := stmt.Query(start)
-		if err != nil {
-			log.Printf("could not execute statement for RangeIterator: %v", err)
-			return nil, err
-		}
-
-		return rows, nil
+		return stmt, []interface{}{start}, nil
 	}
 
 	if end != nil {
@@ -249,16 +223,10 @@ func (r *Reader) rangeRows(start, end []byte) (*sql.Rows, error) {
 		stmt, err := r.tx.Prepare(query)
 		if err != nil {
 			log.Printf("could not prepare statement for RangeIterator: %v", err)
-			return nil, err
+			return nil, nil, err
 		}
 
-		rows, err := stmt.Query(end)
-		if err != nil {
-			log.Printf("could not execute statement for RangeIterator: %v", err)
-			return nil, err
-		}
-
-		return rows, nil
+		return stmt, []interface{}{end}, nil
 	}
 
 	query := fmt.Sprintf(
@@ -272,32 +240,25 @@ func (r *Reader) rangeRows(start, end []byte) (*sql.Rows, error) {
 	stmt, err := r.tx.Prepare(query)
 	if err != nil {
 		log.Printf("could not prepare statement for RangeIterator: %v", err)
-		return nil, err
+		return nil, nil, err
 	}
 
-	rows, err := stmt.Query()
-	if err != nil {
-		log.Printf("could not execute statement for RangeIterator: %v", err)
-		return nil, err
-	}
-
-	return rows, nil
+	return stmt, []interface{}{}, nil
 }
 
 // RangeIterator returns a KVIterator that will
 // visit all K/V pairs >= start AND < end
 func (r *Reader) RangeIterator(start, end []byte) store.KVIterator {
-	rows, err := r.rangeRows(start, end)
+	stmt, args, err := r.createRangeStmt(start, end)
 	if err != nil {
 		return nil
 	}
 
-	it := &Iterator{
-		rows:  rows,
-		valid: true,
+	it, err := NewIterator(stmt, args...)
+	if err != nil {
+		log.Printf("could not create iterator in PrefixIterator: %v", err)
+		return nil
 	}
-
-	it.Next()
 
 	return it
 }
