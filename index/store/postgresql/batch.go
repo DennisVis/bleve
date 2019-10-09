@@ -92,12 +92,7 @@ func (b *Batch) Merge(key, val []byte) {
 
 // Reset frees resources for this batch and allows reuse
 func (b *Batch) Reset() {
-	if b.tx != nil {
-		b.err = b.tx.Rollback()
-		if b.err != nil {
-			log.Printf("could not roll back transaction for Reset: %v", b.err)
-		}
-	}
+	b.Close()
 
 	b.tx, b.err = b.db.Begin()
 	if b.err != nil {

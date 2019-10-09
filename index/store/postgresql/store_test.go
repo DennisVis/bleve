@@ -33,7 +33,14 @@ const (
 )
 
 var (
-	testDataSourceName string
+	testDataSourceName string = fmt.Sprintf(
+		"postgresql://%s:%s@%s:%s/%s?sslmode=disable",
+		"postgres",
+		"mysecretpassword",
+		"localhost",
+		"54320",
+		"postgres",
+	)
 )
 
 func setup() {
@@ -73,7 +80,7 @@ func setup() {
 }
 
 func TestMain(m *testing.M) {
-	setup()
+	// setup()
 	code := m.Run()
 	os.Exit(code)
 }
@@ -92,6 +99,8 @@ func truncateTable(t *testing.T) {
 }
 
 func open(t *testing.T, mo store.MergeOperator) store.KVStore {
+	truncateTable(t)
+
 	rv, err := New(mo, map[string]interface{}{
 		"datasourceName": testDataSourceName,
 		"table":          testTable,
@@ -110,8 +119,6 @@ func cleanup(t *testing.T, s store.KVStore) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	truncateTable(t)
 }
 
 func TestPostgreSQLKVCrud(t *testing.T) {

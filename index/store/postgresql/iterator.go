@@ -22,9 +22,9 @@ import (
 
 // Iterator is an abstraction around key iteration
 type Iterator struct {
-	stmt *sql.Stmt
-	args []interface{}
+	DoQuery func(*sql.Tx) (*sql.Rows, error)
 
+	tx   *sql.Tx
 	rows *sql.Rows
 
 	key []byte
@@ -33,39 +33,9 @@ type Iterator struct {
 	err error
 }
 
-func NewIterator(stmt *sql.Stmt, args ...interface{}) (*Iterator, error) {
-	rows, err := stmt.Query(args...)
-	if err != nil {
-		log.Printf("could not execute statement in NewIterator: %v", err)
-		return nil, err
-	}
-
-	it := &Iterator{
-		stmt: stmt,
-		args: args,
-		rows: rows,
-	}
-
-	it.Next()
-
-	return it, nil
-}
-
 // Seek will advance the iterator to the specified key
 func (i *Iterator) Seek(key []byte) {
-	if i.key != nil && bytes.Compare(key, i.key) <= 0 {
-		return
-	}
-
-	i.Close()
-
-	i.rows, i.err = i.stmt.Query(i.args...)
-	if i.err != nil {
-		log.Printf("could not execute statement in Seek: %err", i.err)
-		return
-	}
-
-	for ; i.Valid(); i.Next() {
+	for i.Reset(); i.Valid(); i.Next() {
 		if bytes.Compare(i.key, key) >= 0 {
 			break
 		}
@@ -115,10 +85,30 @@ func (i *Iterator) Current() ([]byte, []byte, bool) {
 	return i.Key(), i.Value(), i.Valid()
 }
 
+// Reset frees resources for this iterator and allows reuse
+func (i *Iterator) Reset() {
+	i.Close()
+
+	i.rows, i.err = i.DoQuery(i.tx)
+	if i.err != nil {
+		log.Printf("could not execute statement in Reset: %err", i.err)
+	}
+
+	i.Next()
+}
+
 // Close closes the iterator
 func (i *Iterator) Close() error {
 	if i.rows != nil {
-		return i.rows.Close()
+		err := i.rows.Close()
+		if err != nil {
+			log.Printf("could not close rows in Close: %v", err)
+			return err
+		}
 	}
+
+	i.rows = nil
+	i.err = nil
+
 	return nil
 }

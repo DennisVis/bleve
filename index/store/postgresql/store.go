@@ -83,6 +83,9 @@ func New(mo store.MergeOperator, config map[string]interface{}) (store.KVStore, 
 	}
 
 	db, err := sql.Open("postgres", datasourceName)
+	if err != nil {
+		return nil, fmt.Errorf("could not open database: %v", err)
+	}
 
 	createTableQuery := fmt.Sprintf(
 		"CREATE TABLE IF NOT EXISTS %s (%s BYTEA PRIMARY KEY, %s BYTEA);",
@@ -122,17 +125,16 @@ func (s *Store) Writer() (store.KVWriter, error) {
 // read data from the KVStore.  If a reader cannot
 // be obtained a non-nil error is returned.
 func (s *Store) Reader() (store.KVReader, error) {
-	ctx := context.Background()
-
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{
+	tx, err := s.db.BeginTx(context.Background(), &sql.TxOptions{
 		Isolation: sql.LevelRepeatableRead,
 	})
 	if err != nil {
-		log.Printf("could not begin database transaction: %v", err)
+		log.Printf("could not begin database transaction in Reader: %v", err)
 		return nil, err
 	}
 
 	return &Reader{
+		db:     s.db,
 		tx:     tx,
 		table:  s.table,
 		keyCol: s.keyCol,

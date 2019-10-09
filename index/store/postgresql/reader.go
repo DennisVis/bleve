@@ -31,6 +31,7 @@ import (
 // keeping isolated readers active, users should
 // close them as soon as they are no longer needed.
 type Reader struct {
+	db *sql.DB
 	tx *sql.Tx
 
 	table  string
@@ -49,14 +50,13 @@ func (r *Reader) Get(key []byte) ([]byte, error) {
 		r.keyCol,
 	)
 
-	var bts []byte
-
 	stmt, err := r.tx.Prepare(query)
 	if err != nil {
 		log.Printf("could not prepare statement for Get: %v", err)
 		return nil, err
 	}
 
+	var bts []byte
 	err = stmt.QueryRow(key).Scan(&bts)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -116,149 +116,145 @@ func (r *Reader) MultiGet(keys [][]byte) ([][]byte, error) {
 	return vals, nil
 }
 
-func (r *Reader) createPrefixStmt(prefix []byte) (*sql.Stmt, []interface{}, error) {
+func doPrefixQuery(tx *sql.Tx, table, keyCol, valCol string, prefix []byte) (*sql.Rows, error) {
 	if prefix != nil {
 		query := fmt.Sprintf(
 			"SELECT %s, %s FROM %s WHERE %s LIKE $1 ORDER BY %s;",
-			r.keyCol,
-			r.valCol,
-			r.table,
-			r.keyCol,
-			r.keyCol,
+			keyCol,
+			valCol,
+			table,
+			keyCol,
+			keyCol,
 		)
 
-		stmt, err := r.tx.Prepare(query)
+		stmt, err := tx.Prepare(query)
 		if err != nil {
-			log.Printf("could not prepare statement for PrefixIterator: %v", err)
-			return nil, nil, err
+			log.Printf("could not prepare statement in doPrefixQuery: %v", err)
+			return nil, err
 		}
 
-		return stmt, []interface{}{append(prefix, '%')}, nil
+		return stmt.Query(append(prefix, '%'))
 	}
 
 	query := fmt.Sprintf(
 		"SELECT %s, %s FROM %s ORDER BY %s;",
-		r.keyCol,
-		r.valCol,
-		r.table,
-		r.keyCol,
+		keyCol,
+		valCol,
+		table,
+		keyCol,
 	)
 
-	stmt, err := r.tx.Prepare(query)
+	stmt, err := tx.Prepare(query)
 	if err != nil {
-		log.Printf("could not prepare statement for PrefixIterator: %v", err)
-		return nil, nil, err
+		log.Printf("could not prepare statement in doPrefixQuery: %v", err)
+		return nil, err
 	}
 
-	return stmt, []interface{}{}, nil
+	return stmt.Query()
 }
 
-// PrefixIterator returns a KVIterator that will
-// visit all K/V pairs with the provided prefix
-func (r *Reader) PrefixIterator(prefix []byte) store.KVIterator {
-	stmt, args, err := r.createPrefixStmt(prefix)
-	if err != nil {
-		return nil
-	}
-
-	it, err := NewIterator(stmt, args...)
-	if err != nil {
-		log.Printf("could not create iterator in PrefixIterator: %v", err)
-		return nil
-	}
-
-	return it
-}
-
-func (r *Reader) createRangeStmt(start, end []byte) (*sql.Stmt, []interface{}, error) {
+func doRangeQuery(tx *sql.Tx, table, keyCol, valCol string, start, end []byte) (*sql.Rows, error) {
 	if start != nil && end != nil {
 		query := fmt.Sprintf(
 			"SELECT %s, %s FROM %s WHERE %s >= $1 AND %s < $2 ORDER BY %s;",
-			r.keyCol,
-			r.valCol,
-			r.table,
-			r.keyCol,
-			r.keyCol,
-			r.keyCol,
+			keyCol,
+			valCol,
+			table,
+			keyCol,
+			keyCol,
+			keyCol,
 		)
 
-		stmt, err := r.tx.Prepare(query)
+		stmt, err := tx.Prepare(query)
 		if err != nil {
-			log.Printf("could not prepare statement for RangeIterator: %v", err)
-			return nil, nil, err
+			log.Printf("could not prepare statement in doRangeQuery: %v", err)
+			return nil, err
 		}
 
-		return stmt, []interface{}{start, end}, nil
+		return stmt.Query(start, end)
 	}
 
 	if start != nil {
 		query := fmt.Sprintf(
 			"SELECT %s, %s FROM %s WHERE %s >= $1 ORDER BY %s;",
-			r.keyCol,
-			r.valCol,
-			r.table,
-			r.keyCol,
-			r.keyCol,
+			keyCol,
+			valCol,
+			table,
+			keyCol,
+			keyCol,
 		)
 
-		stmt, err := r.tx.Prepare(query)
+		stmt, err := tx.Prepare(query)
 		if err != nil {
-			log.Printf("could not prepare statement for RangeIterator: %v", err)
-			return nil, nil, err
+			log.Printf("could not prepare statement in doRangeQuery: %v", err)
+			return nil, err
 		}
 
-		return stmt, []interface{}{start}, nil
+		return stmt.Query(start)
 	}
 
 	if end != nil {
 		query := fmt.Sprintf(
 			"SELECT %s, %s FROM %s WHERE %s < $1 ORDER BY %s;",
-			r.keyCol,
-			r.valCol,
-			r.table,
-			r.keyCol,
-			r.keyCol,
+			keyCol,
+			valCol,
+			table,
+			keyCol,
+			keyCol,
 		)
 
-		stmt, err := r.tx.Prepare(query)
+		stmt, err := tx.Prepare(query)
 		if err != nil {
-			log.Printf("could not prepare statement for RangeIterator: %v", err)
-			return nil, nil, err
+			log.Printf("could not prepare statement in doRangeQuery: %v", err)
+			return nil, err
 		}
 
-		return stmt, []interface{}{end}, nil
+		return stmt.Query(end)
 	}
 
 	query := fmt.Sprintf(
 		"SELECT %s, %s FROM %s ORDER BY %s;",
-		r.keyCol,
-		r.valCol,
-		r.table,
-		r.keyCol,
+		keyCol,
+		valCol,
+		table,
+		keyCol,
 	)
 
-	stmt, err := r.tx.Prepare(query)
+	stmt, err := tx.Prepare(query)
 	if err != nil {
-		log.Printf("could not prepare statement for RangeIterator: %v", err)
-		return nil, nil, err
+		log.Printf("could not prepare statement in doRangeQuery: %v", err)
+		return nil, err
 	}
 
-	return stmt, []interface{}{}, nil
+	return stmt.Query()
+}
+
+// PrefixIterator returns a KVIterator that will
+// visit all K/V pairs with the provided prefix
+func (r *Reader) PrefixIterator(prefix []byte) store.KVIterator {
+	it := &Iterator{
+		tx: r.tx,
+		DoQuery: func(tx *sql.Tx) (*sql.Rows, error) {
+			return doPrefixQuery(tx, r.table, r.keyCol, r.valCol, prefix)
+		},
+	}
+
+	it.Reset()
+
+	return it
 }
 
 // RangeIterator returns a KVIterator that will
 // visit all K/V pairs >= start AND < end
 func (r *Reader) RangeIterator(start, end []byte) store.KVIterator {
-	stmt, args, err := r.createRangeStmt(start, end)
-	if err != nil {
-		return nil
+	it := &Iterator{
+		tx: r.tx,
+		DoQuery: func(tx *sql.Tx) (*sql.Rows, error) {
+			return doRangeQuery(tx, r.table, r.keyCol, r.valCol, start, end)
+		},
 	}
 
-	it, err := NewIterator(stmt, args...)
-	if err != nil {
-		log.Printf("could not create iterator in PrefixIterator: %v", err)
-		return nil
-	}
+	it.Reset()
 
 	return it
 }

@@ -39,21 +39,18 @@ type Writer struct {
 
 // NewBatch returns a KVBatch for performing batch operations on this kvstore
 func (w *Writer) NewBatch() store.KVBatch {
-	tx, err := w.db.Begin()
-	if err != nil {
-		log.Printf("could not start transaction for ExecuteBatch: %v", err)
-		return nil
-	}
-
-	return &Batch{
+	b := &Batch{
 		db:     w.db,
-		tx:     tx,
 		table:  w.table,
 		keyCol: w.keyCol,
 		valCol: w.valCol,
 		mo:     w.mo,
 		merge:  store.NewEmulatedMerge(w.mo),
 	}
+
+	b.Reset()
+
+	return b
 }
 
 // NewBatchEx returns a KVBatch and an associated byte array
