@@ -33,14 +33,7 @@ const (
 )
 
 var (
-	testDataSourceName string = fmt.Sprintf(
-		"postgresql://%s:%s@%s:%s/%s?sslmode=disable",
-		"postgres",
-		"mysecretpassword",
-		"localhost",
-		"54320",
-		"postgres",
-	)
+	testDataSourceName string
 )
 
 func setup() {
@@ -80,7 +73,7 @@ func setup() {
 }
 
 func TestMain(m *testing.M) {
-	// setup()
+	setup()
 	code := m.Run()
 	os.Exit(code)
 }
