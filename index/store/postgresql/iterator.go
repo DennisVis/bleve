@@ -45,8 +45,6 @@ func (i *Iterator) Seek(key []byte) {
 // Next will advance the iterator to the next key
 func (i *Iterator) Next() {
 	if !i.rows.Next() {
-		i.Close()
-		i.err = sql.ErrNoRows
 		return
 	}
 
