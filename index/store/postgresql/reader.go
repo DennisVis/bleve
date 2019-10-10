@@ -31,8 +31,9 @@ import (
 // keeping isolated readers active, users should
 // close them as soon as they are no longer needed.
 type Reader struct {
-	db *sql.DB
-	tx *sql.Tx
+	db   *sql.DB
+	tx   *sql.Tx
+	rows *sql.Rows
 
 	table  string
 	keyCol string
@@ -43,6 +44,8 @@ type Reader struct {
 // If the key does not exist, nil is returned.
 // The caller owns the bytes returned.
 func (r *Reader) Get(key []byte) ([]byte, error) {
+	r.Reset()
+
 	query := fmt.Sprintf(
 		"SELECT %s FROM %s WHERE %s = $1;",
 		r.valCol,
@@ -74,6 +77,8 @@ func (r *Reader) Get(key []byte) ([]byte, error) {
 
 // MultiGet retrieves multiple values in one call.
 func (r *Reader) MultiGet(keys [][]byte) ([][]byte, error) {
+	r.Reset()
+
 	query := fmt.Sprintf(
 		"SELECT %s FROM %s WHERE %s = ANY($1);",
 		r.valCol,
@@ -87,7 +92,7 @@ func (r *Reader) MultiGet(keys [][]byte) ([][]byte, error) {
 		return nil, err
 	}
 
-	rows, err := stmt.Query(pq.Array(keys))
+	r.rows, err = stmt.Query(pq.Array(keys))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -95,13 +100,13 @@ func (r *Reader) MultiGet(keys [][]byte) ([][]byte, error) {
 		log.Printf("could not query for MultiGet: %v", err)
 		return nil, err
 	}
-	defer rows.Close()
+	defer r.rows.Close()
 
 	vals := make([][]byte, 0)
-	for rows.Next() {
+	for r.rows.Next() {
 		var bts []byte
 
-		err := rows.Scan(&bts)
+		err := r.rows.Scan(&bts)
 		if err != nil {
 			log.Printf("could not scan row for MultiGet: %v", err)
 			return nil, err
@@ -233,7 +238,8 @@ func doRangeQuery(tx *sql.Tx, table, keyCol, valCol string, start, end []byte) (
 // visit all K/V pairs with the provided prefix
 func (r *Reader) PrefixIterator(prefix []byte) store.KVIterator {
 	it := &Iterator{
-		tx: r.tx,
+		tx:   r.tx,
+		rows: r.rows,
 		DoQuery: func(tx *sql.Tx) (*sql.Rows, error) {
 			return doPrefixQuery(tx, r.table, r.keyCol, r.valCol, prefix)
 		},
@@ -248,7 +254,8 @@ func (r *Reader) PrefixIterator(prefix []byte) store.KVIterator {
 // visit all K/V pairs >= start AND < end
 func (r *Reader) RangeIterator(start, end []byte) store.KVIterator {
 	it := &Iterator{
-		tx: r.tx,
+		tx:   r.tx,
+		rows: r.rows,
 		DoQuery: func(tx *sql.Tx) (*sql.Rows, error) {
 			return doRangeQuery(tx, r.table, r.keyCol, r.valCol, start, end)
 		},
@@ -259,7 +266,22 @@ func (r *Reader) RangeIterator(start, end []byte) store.KVIterator {
 	return it
 }
 
+// Reset frees resources for this reader and allows reuse
+func (r *Reader) Reset() {
+	if r.rows != nil {
+		err := r.rows.Close()
+		if err != nil {
+			log.Printf("could not close rows in Reset: %v", err)
+		}
+		r.rows = nil
+	}
+}
+
 // Close closes the reader
 func (r *Reader) Close() error {
-	return r.tx.Rollback()
+	err := r.tx.Rollback()
+	if err != nil {
+		log.Printf("could not tollback transaction in Close: %v", err)
+	}
+	return err
 }

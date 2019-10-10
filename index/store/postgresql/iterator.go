@@ -108,7 +108,6 @@ func (i *Iterator) Close() error {
 		}
 	}
 
-	i.rows = nil
 	i.err = nil
 
 	return nil
