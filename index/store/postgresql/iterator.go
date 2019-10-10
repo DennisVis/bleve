@@ -16,27 +16,24 @@ package postgresql
 
 import (
 	"bytes"
-	"database/sql"
-	"log"
 )
+
+type Item struct {
+	K []byte
+	V []byte
+}
 
 // Iterator is an abstraction around key iteration
 type Iterator struct {
-	DoQuery func(*sql.Tx) (*sql.Rows, error)
-
-	tx   *sql.Tx
-	rows *sql.Rows
-
-	key []byte
-	val []byte
-
-	err error
+	items []Item
+	index int
 }
 
 // Seek will advance the iterator to the specified key
 func (i *Iterator) Seek(key []byte) {
-	for i.Reset(); i.Valid(); i.Next() {
-		if bytes.Compare(i.key, key) >= 0 {
+	i.index = 0
+	for ; i.Valid(); i.Next() {
+		if bytes.Compare(i.items[i.index].K, key) >= 0 {
 			break
 		}
 	}
@@ -44,14 +41,7 @@ func (i *Iterator) Seek(key []byte) {
 
 // Next will advance the iterator to the next key
 func (i *Iterator) Next() {
-	if !i.rows.Next() {
-		return
-	}
-
-	i.err = i.rows.Scan(&i.key, &i.val)
-	if i.err != nil {
-		log.Printf("could not scan row as key/val in Next: %err", i.err)
-	}
+	i.index++
 }
 
 // Key returns the key pointed to by the iterator
@@ -59,7 +49,7 @@ func (i *Iterator) Next() {
 // Continued use after that requires that they be copied.
 func (i *Iterator) Key() []byte {
 	if i.Valid() {
-		return i.key
+		return i.items[i.index].K
 	}
 	return nil
 }
@@ -69,14 +59,14 @@ func (i *Iterator) Key() []byte {
 // Continued use after that requires that they be copied.
 func (i *Iterator) Value() []byte {
 	if i.Valid() {
-		return i.val
+		return i.items[i.index].V
 	}
 	return nil
 }
 
 // Valid returns whether or not the iterator is in a valid state
 func (i *Iterator) Valid() bool {
-	return i.err == nil
+	return i.index < len(i.items)
 }
 
 // Current returns Key(),Value(),Valid() in a single operation
@@ -84,29 +74,9 @@ func (i *Iterator) Current() ([]byte, []byte, bool) {
 	return i.Key(), i.Value(), i.Valid()
 }
 
-// Reset frees resources for this iterator and allows reuse
-func (i *Iterator) Reset() {
-	i.Close()
-
-	i.rows, i.err = i.DoQuery(i.tx)
-	if i.err != nil {
-		log.Printf("could not execute statement in Reset: %err", i.err)
-	}
-
-	i.Next()
-}
-
 // Close closes the iterator
 func (i *Iterator) Close() error {
-	if i.rows != nil {
-		err := i.rows.Close()
-		if err != nil {
-			log.Printf("could not close rows in Close: %v", err)
-			return err
-		}
-	}
-
-	i.err = nil
-
+	i.index = 0
+	i.items = nil
 	return nil
 }

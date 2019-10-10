@@ -31,9 +31,7 @@ import (
 // keeping isolated readers active, users should
 // close them as soon as they are no longer needed.
 type Reader struct {
-	db   *sql.DB
-	tx   *sql.Tx
-	rows *sql.Rows
+	tx *sql.Tx
 
 	table  string
 	keyCol string
@@ -44,8 +42,6 @@ type Reader struct {
 // If the key does not exist, nil is returned.
 // The caller owns the bytes returned.
 func (r *Reader) Get(key []byte) ([]byte, error) {
-	r.Reset()
-
 	query := fmt.Sprintf(
 		"SELECT %s FROM %s WHERE %s = $1;",
 		r.valCol,
@@ -77,8 +73,6 @@ func (r *Reader) Get(key []byte) ([]byte, error) {
 
 // MultiGet retrieves multiple values in one call.
 func (r *Reader) MultiGet(keys [][]byte) ([][]byte, error) {
-	r.Reset()
-
 	query := fmt.Sprintf(
 		"SELECT %s FROM %s WHERE %s = ANY($1);",
 		r.valCol,
@@ -92,7 +86,7 @@ func (r *Reader) MultiGet(keys [][]byte) ([][]byte, error) {
 		return nil, err
 	}
 
-	r.rows, err = stmt.Query(pq.Array(keys))
+	rows, err := stmt.Query(pq.Array(keys))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -100,13 +94,13 @@ func (r *Reader) MultiGet(keys [][]byte) ([][]byte, error) {
 		log.Printf("could not query for MultiGet: %v", err)
 		return nil, err
 	}
-	defer r.rows.Close()
+	defer rows.Close()
 
 	vals := make([][]byte, 0)
-	for r.rows.Next() {
+	for rows.Next() {
 		var bts []byte
 
-		err := r.rows.Scan(&bts)
+		err := rows.Scan(&bts)
 		if err != nil {
 			log.Printf("could not scan row for MultiGet: %v", err)
 			return nil, err
@@ -121,18 +115,18 @@ func (r *Reader) MultiGet(keys [][]byte) ([][]byte, error) {
 	return vals, nil
 }
 
-func doPrefixQuery(tx *sql.Tx, table, keyCol, valCol string, prefix []byte) (*sql.Rows, error) {
+func (r *Reader) doPrefixQuery(prefix []byte) (*sql.Rows, error) {
 	if prefix != nil {
 		query := fmt.Sprintf(
 			"SELECT %s, %s FROM %s WHERE %s LIKE $1 ORDER BY %s;",
-			keyCol,
-			valCol,
-			table,
-			keyCol,
-			keyCol,
+			r.keyCol,
+			r.valCol,
+			r.table,
+			r.keyCol,
+			r.keyCol,
 		)
 
-		stmt, err := tx.Prepare(query)
+		stmt, err := r.tx.Prepare(query)
 		if err != nil {
 			log.Printf("could not prepare statement in doPrefixQuery: %v", err)
 			return nil, err
@@ -143,13 +137,13 @@ func doPrefixQuery(tx *sql.Tx, table, keyCol, valCol string, prefix []byte) (*sq
 
 	query := fmt.Sprintf(
 		"SELECT %s, %s FROM %s ORDER BY %s;",
-		keyCol,
-		valCol,
-		table,
-		keyCol,
+		r.keyCol,
+		r.valCol,
+		r.table,
+		r.keyCol,
 	)
 
-	stmt, err := tx.Prepare(query)
+	stmt, err := r.tx.Prepare(query)
 	if err != nil {
 		log.Printf("could not prepare statement in doPrefixQuery: %v", err)
 		return nil, err
@@ -158,19 +152,19 @@ func doPrefixQuery(tx *sql.Tx, table, keyCol, valCol string, prefix []byte) (*sq
 	return stmt.Query()
 }
 
-func doRangeQuery(tx *sql.Tx, table, keyCol, valCol string, start, end []byte) (*sql.Rows, error) {
+func (r *Reader) doRangeQuery(start, end []byte) (*sql.Rows, error) {
 	if start != nil && end != nil {
 		query := fmt.Sprintf(
 			"SELECT %s, %s FROM %s WHERE %s >= $1 AND %s < $2 ORDER BY %s;",
-			keyCol,
-			valCol,
-			table,
-			keyCol,
-			keyCol,
-			keyCol,
+			r.keyCol,
+			r.valCol,
+			r.table,
+			r.keyCol,
+			r.keyCol,
+			r.keyCol,
 		)
 
-		stmt, err := tx.Prepare(query)
+		stmt, err := r.tx.Prepare(query)
 		if err != nil {
 			log.Printf("could not prepare statement in doRangeQuery: %v", err)
 			return nil, err
@@ -182,14 +176,14 @@ func doRangeQuery(tx *sql.Tx, table, keyCol, valCol string, start, end []byte) (
 	if start != nil {
 		query := fmt.Sprintf(
 			"SELECT %s, %s FROM %s WHERE %s >= $1 ORDER BY %s;",
-			keyCol,
-			valCol,
-			table,
-			keyCol,
-			keyCol,
+			r.keyCol,
+			r.valCol,
+			r.table,
+			r.keyCol,
+			r.keyCol,
 		)
 
-		stmt, err := tx.Prepare(query)
+		stmt, err := r.tx.Prepare(query)
 		if err != nil {
 			log.Printf("could not prepare statement in doRangeQuery: %v", err)
 			return nil, err
@@ -201,14 +195,14 @@ func doRangeQuery(tx *sql.Tx, table, keyCol, valCol string, start, end []byte) (
 	if end != nil {
 		query := fmt.Sprintf(
 			"SELECT %s, %s FROM %s WHERE %s < $1 ORDER BY %s;",
-			keyCol,
-			valCol,
-			table,
-			keyCol,
-			keyCol,
+			r.keyCol,
+			r.valCol,
+			r.table,
+			r.keyCol,
+			r.keyCol,
 		)
 
-		stmt, err := tx.Prepare(query)
+		stmt, err := r.tx.Prepare(query)
 		if err != nil {
 			log.Printf("could not prepare statement in doRangeQuery: %v", err)
 			return nil, err
@@ -219,13 +213,13 @@ func doRangeQuery(tx *sql.Tx, table, keyCol, valCol string, start, end []byte) (
 
 	query := fmt.Sprintf(
 		"SELECT %s, %s FROM %s ORDER BY %s;",
-		keyCol,
-		valCol,
-		table,
-		keyCol,
+		r.keyCol,
+		r.valCol,
+		r.table,
+		r.keyCol,
 	)
 
-	stmt, err := tx.Prepare(query)
+	stmt, err := r.tx.Prepare(query)
 	if err != nil {
 		log.Printf("could not prepare statement in doRangeQuery: %v", err)
 		return nil, err
@@ -237,44 +231,51 @@ func doRangeQuery(tx *sql.Tx, table, keyCol, valCol string, start, end []byte) (
 // PrefixIterator returns a KVIterator that will
 // visit all K/V pairs with the provided prefix
 func (r *Reader) PrefixIterator(prefix []byte) store.KVIterator {
-	it := &Iterator{
-		tx:   r.tx,
-		rows: r.rows,
-		DoQuery: func(tx *sql.Tx) (*sql.Rows, error) {
-			return doPrefixQuery(tx, r.table, r.keyCol, r.valCol, prefix)
-		},
+	rows, err := r.doPrefixQuery(prefix)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	items := make([]Item, 0)
+	for rows.Next() {
+		var item Item
+
+		err := rows.Scan(&item.K, &item.V)
+		if err != nil {
+			log.Printf("could not scan row as key/value pair for PrefixIterator: %v", err)
+			return nil
+		}
+
+		items = append(items, item)
 	}
 
-	it.Reset()
-
-	return it
+	return &Iterator{items: items}
 }
 
 // RangeIterator returns a KVIterator that will
 // visit all K/V pairs >= start AND < end
 func (r *Reader) RangeIterator(start, end []byte) store.KVIterator {
-	it := &Iterator{
-		tx:   r.tx,
-		rows: r.rows,
-		DoQuery: func(tx *sql.Tx) (*sql.Rows, error) {
-			return doRangeQuery(tx, r.table, r.keyCol, r.valCol, start, end)
-		},
+	rows, err := r.doRangeQuery(start, end)
+	if err != nil {
+		return nil
 	}
+	defer rows.Close()
 
-	it.Reset()
+	items := make([]Item, 0)
+	for rows.Next() {
+		var item Item
 
-	return it
-}
-
-// Reset frees resources for this reader and allows reuse
-func (r *Reader) Reset() {
-	if r.rows != nil {
-		err := r.rows.Close()
+		err := rows.Scan(&item.K, &item.V)
 		if err != nil {
-			log.Printf("could not close rows in Reset: %v", err)
+			log.Printf("could not scan row as key/value pair for RangeIterator: %v", err)
+			return nil
 		}
-		r.rows = nil
+
+		items = append(items, item)
 	}
+
+	return &Iterator{items: items}
 }
 
 // Close closes the reader

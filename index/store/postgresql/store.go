@@ -134,7 +134,6 @@ func (s *Store) Reader() (store.KVReader, error) {
 	}
 
 	return &Reader{
-		db:     s.db,
 		tx:     tx,
 		table:  s.table,
 		keyCol: s.keyCol,
